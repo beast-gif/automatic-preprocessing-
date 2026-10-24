@@ -1,0 +1,10 @@
+.env
+kaggle.json
+runs/
+*.pkl
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+.vscode/
+Thumbs.db

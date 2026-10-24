@@ -1,0 +1,83 @@
+# ---------------------------------------------------------------
+# Dataset agent - config
+# Secrets (keys/tokens) live in .env, never in this file.
+# ---------------------------------------------------------------
+
+llm:                      # Velona (OpenAI-compatible)
+  base_url: https://velona.in/v1
+  api_key_env: VELONA_API_KEY      # name of the variable in .env that holds the key
+  models:
+    fast: anthropic/claude-haiku-5.5     # parser, query expansion, preprocessing agents
+    smart: anthropic/claude-sonnet-5.5   # re-ranker, report
+  temperature: 0
+  max_retries: 3
+  timeout_s: 90
+
+scope:
+  modalities: [tabular]   # v1 supports tabular only
+
+parser:
+  model: fast             # key from llm.models
+
+queries:
+  model: fast
+  n: 4                    # search queries generated per project
+
+search:
+  per_query_limit: 10     # results kept per query per source
+  enrich_top_k: 16        # top K after pre-ranking get details (Kaggle metadata / HF schema); only these are ranked
+
+rank:
+  weights:                # must add up to 1
+    coverage: 0.45        # share of project terms found in title / description / columns
+    modality: 0.10
+    size: 0.15
+    license: 0.10
+    popularity: 0.20
+  kaggle_bytes_per_row: 30   # rough: Kaggle sizes are compressed; real rows are measured in step 5
+  popularity_floor: 10000    # downloads treated as "max" when a source's real max is lower
+  no_info_similarity_factor: 0.6   # coverage multiplier when a dataset has no description and no schema
+  bad_title_words: [corrupted, fake, dummy, broken, noisy]
+  rerank_top_n: 8            # how many go to the LLM (one call either way)
+  rerank_model: smart        # key from llm.models
+  final_mix: 0.5             # final = (1 - mix)*score + mix*fit/10
+  weak_threshold: 0.6        # below this, the graph retries with new queries
+
+graph:
+  max_retries: 2             # extra search attempts (new queries) when the best match is weak
+  prepare_fallbacks: 2       # if the pick can't be downloaded or used, try the next judged datasets
+
+prepare:
+  max_download_mb: 1024      # refuse datasets bigger than this
+  max_files: 3               # tabular files downloaded per dataset (largest first)
+  missing_tokens: ["", "?", "nan", "null", "n/a"]   # in text columns, these mean "missing"
+  numeric_coerce_min: 0.95   # a text column becomes numeric if >= 95% of non-blank values are numbers
+  split: {train: 0.70, val: 0.15, test: 0.15}
+  seed: 42
+  profile_max_rows: 200000   # bigger train splits are profiled on a random sample
+  target_model: fast         # used only if no column name matches the target
+
+agents:
+  model: fast                # the four preprocessing specialists (one call each, in parallel)
+
+preprocess:
+  drop_if_null_above: 0.6    # missing specialist drops columns emptier than this
+  one_hot_max_categories: 15 # encoding: one_hot up to this many categories, frequency_encode above
+  one_hot_hard_limit: 50     # merger rewrites one_hot to frequency_encode above this
+  clip_min_rows: 100         # merger rejects percentile clipping on fewer train rows
+
+mcp:
+  load_timeout_s: 120     # a server that doesn't respond in this time is skipped
+  servers:
+    huggingface:
+      enabled: true
+      transport: streamable_http
+      url: https://huggingface.co/mcp
+      token_env: HF_TOKEN            # optional; works without it but with lower limits
+    kaggle:
+      enabled: true
+      transport: stdio
+      command: uvx                   # needs uv installed: pip install uv
+      # --with "mcp<2": kaggle-mcp-server still imports FastMCP, which mcp 2.x renamed,
+      # so uvx must install the 1.x SDK alongside it
+      args: ["--with", "mcp<2", "kaggle-mcp-server"]   # reads %USERPROFILE%\.kaggle\kaggle.json
